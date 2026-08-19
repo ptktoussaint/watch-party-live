@@ -1,0 +1,335 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  background:
+    linear-gradient(180deg, rgba(10, 4, 18, 0.90), rgba(10, 4, 18, 0.96)),
+    url('assets/logo.png') center center / cover no-repeat fixed;
+  color: #f0f0f0;
+  min-height: 100vh;
+}
+
+.screen { min-height: 100vh; }
+.hidden { display: none !important; }
+
+/* Tela de entrada */
+#join-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.card {
+  background: #1a0f26;
+  border: 1px solid #4a2a6d;
+  border-radius: 16px;
+  padding: 40px;
+  max-width: 400px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 0 40px rgba(168, 85, 247, 0.15);
+}
+
+.logo-text {
+  font-size: 32px;
+  font-weight: 800;
+  margin: 0 0 26px;
+  letter-spacing: 0.02em;
+  background: linear-gradient(135deg, #e879f9, #a855f7, #7c3aed);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+#join-form { display: flex; flex-direction: column; gap: 6px; text-align: left; }
+#join-form label { font-size: 13px; color: #b0b0bb; margin-top: 10px; }
+#join-form input {
+  background: #241830;
+  border: 1px solid #4a2a6d;
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: #fff;
+  font-size: 15px;
+}
+#join-form input:focus { outline: 2px solid #a855f7; border-color: transparent; }
+
+button {
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 18px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 18px;
+}
+button:hover { background: linear-gradient(135deg, #9333ea, #6d28d9); }
+
+.hint { color: #8a7599; font-size: 12px; margin-top: 18px; line-height: 1.5; }
+
+.site-signature {
+  color: #6b5a7a;
+  font-size: 11px;
+  text-align: center;
+  margin-top: 24px;
+}
+
+.sidebar-signature {
+  margin-top: 30px;
+  text-align: left;
+}
+
+/* Sala */
+.room-layout {
+  display: flex;
+  height: 100vh;
+}
+
+.video-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.player-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 1100px;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+#yt-container, #player, #player-block {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Camada invisível que bloqueia cliques/teclado no player do YouTube para quem
+   não é host, impedindo pausar, avançar ou interagir com o vídeo de qualquer forma. */
+#player-block {
+  z-index: 5;
+  background: transparent;
+  cursor: default;
+}
+
+#remote-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+.unlock-audio-btn {
+  position: absolute;
+  z-index: 6;
+  bottom: 16px;
+  right: 16px;
+  margin-top: 0;
+  font-size: 13px;
+  padding: 8px 14px;
+}
+
+.waiting-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 40px;
+  margin: 0;
+  background: #0d0614;
+  z-index: 1;
+}
+
+.video-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 1100px;
+}
+
+#yt-quality-select {
+  background: #241830;
+  border: 1px solid #4a2a6d;
+  color: #d9c5ea;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+#fullscreen-btn {
+  background: #241830;
+  border: 1px solid #4a2a6d;
+  color: #d9c5ea;
+  font-weight: 500;
+  font-size: 13px;
+  padding: 8px 14px;
+  margin-top: 0;
+}
+#fullscreen-btn:hover { background: #2f1e3d; }
+
+#host-controls {
+  width: 100%;
+  max-width: 1100px;
+  background: #180c22;
+  border: 1px solid #3a2050;
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+.mode-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.mode-tab {
+  flex: 1;
+  margin-top: 0;
+  background: #241830;
+  border: 1px solid #4a2a6d;
+  color: #b39ac9;
+  font-size: 13px;
+  padding: 10px 14px;
+}
+.mode-tab:hover { background: #2f1e3d; }
+.mode-tab.active {
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+  color: #fff;
+  border-color: transparent;
+}
+
+.host-controls-label {
+  display: block;
+  font-size: 12px;
+  color: #b39ac9;
+  margin-bottom: 8px;
+}
+
+.host-controls-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+#screen-quality-select {
+  flex: 1;
+  min-width: 220px;
+  background: #241830;
+  border: 1px solid #4a2a6d;
+  color: #d9c5ea;
+  font-size: 13px;
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+
+#video-url-input {
+  flex: 1;
+  min-width: 220px;
+  background: #241830;
+  border: 1px solid #4a2a6d;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #fff;
+}
+
+#share-btn, #stop-share-btn, #load-video-btn { margin-top: 0; padding: 10px 16px; font-size: 14px; }
+
+.danger-btn {
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+}
+.danger-btn:hover { background: linear-gradient(135deg, #b91c1c, #991b1b); }
+
+.sidebar {
+  width: 260px;
+  background: #150a20;
+  border-left: 1px solid #3a2050;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.sidebar h3 { margin: 0 0 4px; font-size: 16px; }
+.sidebar h4 { margin: 20px 0 10px; font-size: 13px; color: #b39ac9; text-transform: uppercase; letter-spacing: 0.05em; }
+
+#participant-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+
+#participant-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #221430;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  gap: 8px;
+}
+
+.participant-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.participant-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.kick-btn {
+  background: #3a1424;
+  border: 1px solid #6d2a3f;
+  color: #f87171;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  margin: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.kick-btn:hover { background: #4a1a2e; }
+
+.status-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+.status-watching { background: #2a1b3a; color: #c084fc; }
+.status-away { background: #3a2b1b; color: #fbbf24; }
+
+.host-tag {
+  font-size: 10px;
+  color: #c084fc;
+  margin-left: 6px;
+}
+
+@media (max-width: 720px) {
+  .room-layout { flex-direction: column; }
+  .sidebar { width: 100%; border-left: none; border-top: 1px solid #3a2050; }
+  .host-controls-row { flex-direction: column; align-items: stretch; }
+}
