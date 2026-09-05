@@ -47,24 +47,24 @@ let timeSyncInterval = null;
 let lastKnownState = { isPlaying: false, currentTime: 0 };
 
 // --- Estado do modo Compartilhar tela ---
-// Só STUN não é suficiente: quem está atrás de NAT restritivo/rede corporativa
-// nunca recebe o vídeo (a conexão parece estabelecida, mas nenhum frame chega,
-// o que aparece pro usuário como "imagem toda preta"). Um servidor TURN de
-// fallback resolve isso retransmitindo a mídia quando a conexão direta falha.
-const RTC_CONFIG = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    {
-      urls: [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp'
-      ],
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
-    }
-  ]
-};
+// Só STUN não é suficiente: quem está atrás de NAT restritivo/CGNAT (comum em
+// 4G e rede corporativa) nunca recebe o vídeo — a conexão parece estabelecida,
+// mas nenhum frame chega, o que aparece pro usuário como "imagem toda preta".
+// A configuração de TURN vem do servidor (rota /turn-config), que lê das
+// variáveis de ambiente TURN_URLS/TURN_USERNAME/TURN_CREDENTIAL — assim dá
+// pra trocar de provedor sem mexer em código. Testado e confirmado que um
+// TURN público de demonstração usado antes aqui não funcionava de verdade.
+const DEFAULT_RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+let rtcConfigPromise = null;
+function getRtcConfig() {
+  if (!rtcConfigPromise) {
+    rtcConfigPromise = fetch('/turn-config')
+      .then((r) => r.json())
+      .then((cfg) => (cfg && Array.isArray(cfg.iceServers) ? cfg : DEFAULT_RTC_CONFIG))
+      .catch(() => DEFAULT_RTC_CONFIG);
+  }
+  return rtcConfigPromise;
+}
 const QUALITY_PRESETS = {
   economy:  { width: 1280, height: 720,  frameRate: 15, maxBitrate: 1_200_000 },
   balanced: { width: 1600, height: 900,  frameRate: 24, maxBitrate: 2_200_000 },
@@ -325,7 +325,7 @@ function stopSharing() {
     localStream.getTracks().forEach((t) => t.stop());
     localStream = null;
   }
-  peers.forEach((pc) => pc.close());
+  peers.forEach((pc) => pc && pc.close());
   peers.clear();
   resyncAttempts.clear();
 
@@ -342,8 +342,14 @@ function stopSharing() {
   socket.emit('sharing-stopped');
 }
 
-function createOfferFor(viewerId) {
-  const pc = new RTCPeerConnection(RTC_CONFIG);
+async function createOfferFor(viewerId) {
+  if (peers.has(viewerId)) return; // já existe ou já está sendo criada
+  peers.set(viewerId, null); // reserva o lugar antes do await, evita corrida
+
+  const rtcConfig = await getRtcConfig();
+  if (!isSharing || !knownParticipantIds.has(viewerId)) { peers.delete(viewerId); return; }
+
+  const pc = new RTCPeerConnection(rtcConfig);
   peers.set(viewerId, pc);
 
   localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
@@ -440,7 +446,10 @@ async function handleIncomingOffer(fromId, sdp) {
     hostPeerConnection = null;
   }
 
-  const pc = new RTCPeerConnection(RTC_CONFIG);
+  const rtcConfig = await getRtcConfig();
+  if (isHost || (currentHostId && fromId !== currentHostId)) return; // pode ter mudado enquanto aguardava
+
+  const pc = new RTCPeerConnection(rtcConfig);
   hostPeerConnection = pc;
 
   pc.ontrack = (event) => {

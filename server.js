@@ -9,6 +9,30 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Servidor(es) TURN, configurados via variável de ambiente — sem isso, quem
+// está atrás de NAT restritivo/CGNAT (comum em 4G e redes corporativas) não
+// consegue estabelecer a conexão direta de compartilhamento de tela. Defina
+// TURN_URLS (uma ou mais URLs separadas por vírgula, ex:
+// "turn:seu-turn.com:3478,turn:seu-turn.com:443?transport=tcp"),
+// TURN_USERNAME e TURN_CREDENTIAL nas variáveis de ambiente do serviço de
+// hospedagem (ex: Render > Environment) com as credenciais de um provedor
+// de TURN de verdade (Cloudflare Realtime, Twilio, Metered.ca com conta
+// própria, ou um coturn próprio). Sem isso configurado, só STUN é usado, o
+// que funciona pra maioria mas falha pra quem precisa de um retransmissor.
+app.get('/turn-config', (req, res) => {
+  const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+
+  if (process.env.TURN_URLS) {
+    iceServers.push({
+      urls: process.env.TURN_URLS.split(',').map((u) => u.trim()).filter(Boolean),
+      username: process.env.TURN_USERNAME || '',
+      credential: process.env.TURN_CREDENTIAL || ''
+    });
+  }
+
+  res.json({ iceServers });
+});
+
 // rooms[roomId] = {
 //   hostId,
 //   participants: { socketId: {id, name, status} },
