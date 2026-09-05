@@ -276,7 +276,13 @@ shareBtn.addEventListener('click', async () => {
       video: {
         width: { ideal: preset.width },
         height: { ideal: preset.height },
-        frameRate: { ideal: preset.frameRate }
+        frameRate: { ideal: preset.frameRate },
+        // Sem isso, em monitores 4K/ultrawide o navegador costuma ignorar o
+        // "ideal" e capturar na resolução nativa da tela. Isso manda um vídeo
+        // grande demais pra decodificar em aparelhos mais fracos (celular,
+        // notebook antigo), que ficam com a imagem preta mesmo a conexão
+        // funcionando — enquanto quem tem hardware melhor não percebe nada.
+        resizeMode: 'crop-and-scale'
       },
       audio: true
     });
@@ -383,11 +389,13 @@ async function handleIncomingOffer(fromId, sdp) {
 
   pc.ontrack = (event) => {
     remoteVideo.srcObject = event.streams[0];
-    remoteVideo.muted = false;
-    const playPromise = remoteVideo.play();
-    if (playPromise && playPromise.catch) {
-      playPromise.catch(() => unlockAudioBtn.classList.remove('hidden'));
-    }
+    // Começa mudo: autoplay com som é bloqueado por padrão em muitos navegadores
+    // (varia por navegador/dispositivo, por isso só afeta alguns usuários) e,
+    // se o play() com som falhar, o vídeo nunca chega a rodar — fica preto pra
+    // sempre. Mudo, o autoplay sempre funciona; o som fica atrás do botão.
+    remoteVideo.muted = true;
+    remoteVideo.play().catch(() => {});
+    unlockAudioBtn.classList.remove('hidden');
     updateVideoVisibility();
   };
 
@@ -414,6 +422,7 @@ function clearRemoteVideo() {
 }
 
 unlockAudioBtn.addEventListener('click', () => {
+  remoteVideo.muted = false;
   remoteVideo.play().catch(() => {});
   unlockAudioBtn.classList.add('hidden');
 });
