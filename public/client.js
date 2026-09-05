@@ -7,6 +7,7 @@ const roomNameDisplay = document.getElementById('room-name-display');
 const participantList = document.getElementById('participant-list');
 const participantCount = document.getElementById('participant-count');
 const hostControls = document.getElementById('host-controls');
+const closeRoomBtn = document.getElementById('close-room-btn');
 const fullscreenBtn = document.getElementById('fullscreen-btn');
 const waitingMsg = document.getElementById('waiting-msg');
 
@@ -74,6 +75,10 @@ let isSharing = false;
 const peers = new Map(); // viewerId -> RTCPeerConnection
 let knownParticipantIds = new Set();
 let hostPeerConnection = null;
+const resyncAttempts = new Map(); // viewerId -> nº de reconexões já tentadas (host)
+let statsWatchInterval = null;
+let statsWatchBytes = -1;
+let statsWatchResyncSent = false;
 
 // Preenche a sala automaticamente se veio na URL (?sala=xxx)
 const params = new URLSearchParams(window.location.search);
@@ -320,6 +325,7 @@ function stopSharing() {
   }
   peers.forEach((pc) => pc.close());
   peers.clear();
+  resyncAttempts.clear();
 
   if (remoteVideo.srcObject) {
     remoteVideo.srcObject = null;
@@ -349,10 +355,10 @@ function createOfferFor(viewerId) {
   // numa "imagem preta" pra sempre, já que o <video> recebeu a track mas nunca
   // chegam frames. Recria a conexão do zero pra tentar de novo (ex: via TURN).
   pc.oniceconnectionstatechange = () => {
-    if (pc.iceConnectionState === 'failed' && peers.get(viewerId) === pc) {
-      pc.close();
-      peers.delete(viewerId);
-      if (isSharing && knownParticipantIds.has(viewerId)) createOfferFor(viewerId);
+    if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+      resyncAttempts.delete(viewerId);
+    } else if (pc.iceConnectionState === 'failed') {
+      reconnectViewer(viewerId, pc);
     }
   };
 
@@ -361,6 +367,23 @@ function createOfferFor(viewerId) {
     .then(() => {
       socket.emit('webrtc-offer', { targetId: viewerId, sdp: pc.localDescription });
     });
+}
+
+// Recria do zero a conexão com um espectador específico (ICE falhou, ou ele
+// avisou que não está recebendo frames). Limita as tentativas pra não ficar
+// reconectando pra sempre caso a rede dele realmente não consiga se conectar.
+const MAX_RECONNECT_ATTEMPTS = 4;
+function reconnectViewer(viewerId, pc) {
+  if (!isSharing || !knownParticipantIds.has(viewerId)) return;
+  if (peers.get(viewerId) !== pc) return; // já foi substituída por outra tentativa
+
+  const attempts = (resyncAttempts.get(viewerId) || 0) + 1;
+  if (attempts > MAX_RECONNECT_ATTEMPTS) return;
+  resyncAttempts.set(viewerId, attempts);
+
+  pc.close();
+  peers.delete(viewerId);
+  createOfferFor(viewerId);
 }
 
 function applyBitrateLimit(pc) {
@@ -379,6 +402,7 @@ function applyBitrateLimit(pc) {
 async function handleIncomingOffer(fromId, sdp) {
   if (isHost) return;
 
+  stopStatsWatch();
   if (hostPeerConnection) {
     hostPeerConnection.close();
     hostPeerConnection = null;
@@ -397,6 +421,7 @@ async function handleIncomingOffer(fromId, sdp) {
     remoteVideo.play().catch(() => {});
     unlockAudioBtn.classList.remove('hidden');
     updateVideoVisibility();
+    startStatsWatch(pc);
   };
 
   pc.onicecandidate = (e) => {
@@ -409,7 +434,45 @@ async function handleIncomingOffer(fromId, sdp) {
   socket.emit('webrtc-answer', { targetId: fromId, sdp: pc.localDescription });
 }
 
+// A conexão pode "dar certo" na sinalização (ontrack dispara, o botão de
+// áudio aparece) e mesmo assim nenhum frame de vídeo chegar de fato — o que
+// aparece pro usuário como imagem preta constante. Aqui a gente confere
+// periodicamente se os bytes de vídeo recebidos estão de fato aumentando; se
+// travarem, avisa o host pra recriar a conexão do zero, sem precisar de F5.
+function startStatsWatch(pc) {
+  stopStatsWatch();
+  statsWatchBytes = -1;
+  statsWatchResyncSent = false;
+  statsWatchInterval = setInterval(async () => {
+    if (hostPeerConnection !== pc) { stopStatsWatch(); return; }
+    let bytes = null;
+    try {
+      const stats = await pc.getStats();
+      stats.forEach((report) => {
+        if (report.type === 'inbound-rtp' && report.kind === 'video') bytes = report.bytesReceived;
+      });
+    } catch (err) { return; }
+    if (bytes === null) return;
+
+    if (bytes > statsWatchBytes) {
+      statsWatchBytes = bytes;
+      statsWatchResyncSent = false;
+      return;
+    }
+    if (!statsWatchResyncSent) {
+      statsWatchResyncSent = true;
+      socket.emit('request-resync');
+    }
+  }, 5000);
+}
+
+function stopStatsWatch() {
+  if (statsWatchInterval) clearInterval(statsWatchInterval);
+  statsWatchInterval = null;
+}
+
 function clearRemoteVideo() {
+  stopStatsWatch();
   if (hostPeerConnection) {
     hostPeerConnection.close();
     hostPeerConnection = null;
@@ -474,6 +537,7 @@ joinForm.addEventListener('submit', (e) => {
   socket.on('joined', ({ youAreHost, videoId, currentTime, isPlaying }) => {
     isHost = youAreHost;
     hostControls.classList.toggle('hidden', !isHost);
+    closeRoomBtn.classList.toggle('hidden', !isHost);
     joinScreen.classList.add('hidden');
     roomScreen.classList.remove('hidden');
     roomNameDisplay.textContent = roomId;
@@ -532,6 +596,16 @@ joinForm.addEventListener('submit', (e) => {
     clearRemoteVideo();
   });
 
+  // Espectador avisou que a conexão travou (ontrack disparou mas nenhum frame
+  // chega). Recria a conexão do zero pra ele — cobre casos em que o
+  // iceConnectionState nunca chega a "failed" (fica preso em "disconnected"
+  // ou até "connected" sem mídia fluindo de fato).
+  socket.on('request-resync', ({ fromId }) => {
+    if (!isHost || !isSharing) return;
+    const pc = peers.get(fromId);
+    if (pc) reconnectViewer(fromId, pc);
+  });
+
   socket.on('playback-update', ({ isPlaying, currentTime }) => {
     lastKnownState = { isPlaying, currentTime };
     if (!player || !playerReady) return;
@@ -556,7 +630,7 @@ joinForm.addEventListener('submit', (e) => {
 
   socket.on('room-closed', () => {
     stopTimeSyncLoop();
-    alert('O host fechou a sala.');
+    alert(isHost ? 'Você encerrou a sala.' : 'O host encerrou a sala.');
     window.location.href = window.location.pathname;
   });
 
@@ -612,6 +686,12 @@ participantList.addEventListener('click', (e) => {
   const targetId = btn.dataset.id;
   if (!targetId) return;
   socket.emit('kick', { targetId });
+});
+
+closeRoomBtn.addEventListener('click', () => {
+  if (!socket || !isHost) return;
+  if (!confirm('Encerrar a sala? Todos os participantes serão desconectados.')) return;
+  socket.emit('close-room');
 });
 
 function escapeHtml(str) {

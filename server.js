@@ -140,6 +140,16 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('sharing-stopped');
   });
 
+  // Espectador percebeu que a conexão travou (sem frames chegando) e pede
+  // pro host recriar a transmissão pra ele, sem precisar dar F5 na página.
+  socket.on('request-resync', () => {
+    const roomId = socket.data.roomId;
+    if (!roomId) return;
+    const room = rooms[roomId];
+    if (!room || !room.hostId || socket.id === room.hostId) return;
+    io.to(room.hostId).emit('request-resync', { fromId: socket.id });
+  });
+
   // --- Comum aos dois modos ---
   socket.on('visibility', ({ hidden }) => {
     const roomId = socket.data.roomId;
@@ -170,6 +180,19 @@ io.on('connection', (socket) => {
     targetSocket.data.roomId = null;
 
     broadcastRoomState(roomId);
+  });
+
+  // Host encerra a sala manualmente (sem precisar fechar a aba/desconectar).
+  socket.on('close-room', () => {
+    const roomId = socket.data.roomId;
+    if (!roomId) return;
+    const room = rooms[roomId];
+    if (!room || socket.id !== room.hostId) return;
+
+    io.to(roomId).emit('room-closed');
+    delete rooms[roomId];
+    io.socketsLeave(roomId);
+    socket.data.roomId = null;
   });
 
   socket.on('disconnect', () => {
