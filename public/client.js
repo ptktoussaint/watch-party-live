@@ -78,6 +78,7 @@ let hostPeerConnection = null;
 const resyncAttempts = new Map(); // viewerId -> nº de reconexões já tentadas (host)
 let statsWatchInterval = null;
 let statsWatchBytes = -1;
+let statsWatchFrames = -1;
 let statsWatchResyncSent = false;
 
 // Preenche a sala automaticamente se veio na URL (?sala=xxx)
@@ -346,6 +347,7 @@ function createOfferFor(viewerId) {
 
   localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
   applyBitrateLimit(pc);
+  preferVp8(pc);
 
   pc.onicecandidate = (e) => {
     if (e.candidate) socket.emit('webrtc-ice', { targetId: viewerId, candidate: e.candidate });
@@ -384,6 +386,32 @@ function reconnectViewer(viewerId, pc) {
   pc.close();
   peers.delete(viewerId);
   createOfferFor(viewerId);
+}
+
+// Sem isso, o navegador pode escolher VP9/AV1 pra codificar (geralmente o
+// preferido em compartilhamento de tela por qualidade/banda). Só que decode
+// de VP9/AV1 por hardware falha em silêncio em alguns aparelhos/drivers de
+// vídeo mais antigos — a conexão fica "ok", mas nada é desenhado na tela
+// (imagem preta), só em quem tem esse hardware específico. VP8 tem decoder
+// por software garantido em praticamente todo navegador, então é bem mais
+// difícil de falhar assim.
+function preferVp8(pc) {
+  if (typeof RTCRtpSender === 'undefined' || !RTCRtpSender.getCapabilities) return;
+  const transceiver = pc.getTransceivers().find((t) => t.sender && t.sender.track && t.sender.track.kind === 'video');
+  if (!transceiver || typeof transceiver.setCodecPreferences !== 'function') return;
+
+  const caps = RTCRtpSender.getCapabilities('video');
+  if (!caps || !caps.codecs) return;
+
+  const isVp8 = (c) => c.mimeType.toLowerCase() === 'video/vp8';
+  const isRtx = (c) => c.mimeType.toLowerCase() === 'video/rtx';
+  const vp8 = caps.codecs.filter(isVp8);
+  const rtx = caps.codecs.filter(isRtx);
+  const others = caps.codecs.filter((c) => !isVp8(c) && !isRtx(c));
+
+  try {
+    transceiver.setCodecPreferences([...vp8, ...rtx, ...others]);
+  } catch (err) { /* navegador não suporta a combinação, ignora e usa o padrão */ }
 }
 
 function applyBitrateLimit(pc) {
@@ -435,27 +463,40 @@ async function handleIncomingOffer(fromId, sdp) {
 }
 
 // A conexão pode "dar certo" na sinalização (ontrack dispara, o botão de
-// áudio aparece) e mesmo assim nenhum frame de vídeo chegar de fato — o que
-// aparece pro usuário como imagem preta constante. Aqui a gente confere
-// periodicamente se os bytes de vídeo recebidos estão de fato aumentando; se
-// travarem, avisa o host pra recriar a conexão do zero, sem precisar de F5.
+// áudio aparece) e mesmo assim a tela ficar preta. Dois jeitos disso
+// acontecer: (1) nenhum byte de vídeo chega de fato (problema de rede) ou
+// (2) os bytes chegam normalmente mas o navegador não consegue DECODIFICAR
+// os frames (problema de codec/hardware do aparelho do espectador — nesse
+// caso reconectar sozinho não adianta se o codec escolhido for o mesmo de
+// novo, por isso também forçamos VP8 em createOfferFor, que é o mais
+// compatível). Monitorando os dois (bytesReceived e framesDecoded) a gente
+// cobre ambos os casos e avisa o host pra recriar a conexão do zero.
 function startStatsWatch(pc) {
   stopStatsWatch();
   statsWatchBytes = -1;
+  statsWatchFrames = -1;
   statsWatchResyncSent = false;
   statsWatchInterval = setInterval(async () => {
     if (hostPeerConnection !== pc) { stopStatsWatch(); return; }
     let bytes = null;
+    let frames = null;
     try {
       const stats = await pc.getStats();
       stats.forEach((report) => {
-        if (report.type === 'inbound-rtp' && report.kind === 'video') bytes = report.bytesReceived;
+        if (report.type === 'inbound-rtp' && report.kind === 'video') {
+          bytes = report.bytesReceived;
+          frames = typeof report.framesDecoded === 'number' ? report.framesDecoded : null;
+        }
       });
     } catch (err) { return; }
     if (bytes === null) return;
 
-    if (bytes > statsWatchBytes) {
-      statsWatchBytes = bytes;
+    const bytesGrew = bytes > statsWatchBytes;
+    const framesGrew = frames === null || frames > statsWatchFrames;
+    statsWatchBytes = bytes;
+    if (frames !== null) statsWatchFrames = frames;
+
+    if (bytesGrew && framesGrew) {
       statsWatchResyncSent = false;
       return;
     }
