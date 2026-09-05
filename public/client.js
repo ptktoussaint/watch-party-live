@@ -46,7 +46,24 @@ let timeSyncInterval = null;
 let lastKnownState = { isPlaying: false, currentTime: 0 };
 
 // --- Estado do modo Compartilhar tela ---
-const RTC_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+// Só STUN não é suficiente: quem está atrás de NAT restritivo/rede corporativa
+// nunca recebe o vídeo (a conexão parece estabelecida, mas nenhum frame chega,
+// o que aparece pro usuário como "imagem toda preta"). Um servidor TURN de
+// fallback resolve isso retransmitindo a mídia quando a conexão direta falha.
+const RTC_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp'
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
+  ]
+};
 const QUALITY_PRESETS = {
   economy:  { width: 1280, height: 720,  frameRate: 15, maxBitrate: 1_200_000 },
   balanced: { width: 1600, height: 900,  frameRate: 24, maxBitrate: 2_200_000 },
@@ -320,6 +337,17 @@ function createOfferFor(viewerId) {
 
   pc.onicecandidate = (e) => {
     if (e.candidate) socket.emit('webrtc-ice', { targetId: viewerId, candidate: e.candidate });
+  };
+
+  // Se a conexão direta falhar (NAT/firewall do espectador), o vídeo fica preso
+  // numa "imagem preta" pra sempre, já que o <video> recebeu a track mas nunca
+  // chegam frames. Recria a conexão do zero pra tentar de novo (ex: via TURN).
+  pc.oniceconnectionstatechange = () => {
+    if (pc.iceConnectionState === 'failed' && peers.get(viewerId) === pc) {
+      pc.close();
+      peers.delete(viewerId);
+      if (isSharing && knownParticipantIds.has(viewerId)) createOfferFor(viewerId);
+    }
   };
 
   pc.createOffer()

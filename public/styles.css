@@ -70,18 +70,6 @@ button:hover { background: linear-gradient(135deg, #9333ea, #6d28d9); }
 
 .hint { color: #8a7599; font-size: 12px; margin-top: 18px; line-height: 1.5; }
 
-.site-signature {
-  color: #6b5a7a;
-  font-size: 11px;
-  text-align: center;
-  margin-top: 24px;
-}
-
-.sidebar-signature {
-  margin-top: 30px;
-  text-align: left;
-}
-
 /* Sala */
 .room-layout {
   display: flex;
