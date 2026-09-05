@@ -75,6 +75,7 @@ let isSharing = false;
 const peers = new Map(); // viewerId -> RTCPeerConnection
 let knownParticipantIds = new Set();
 let hostPeerConnection = null;
+let currentHostId = null;
 const resyncAttempts = new Map(); // viewerId -> nº de reconexões já tentadas (host)
 let statsWatchInterval = null;
 let statsWatchBytes = -1;
@@ -429,6 +430,9 @@ function applyBitrateLimit(pc) {
 // ============================================================
 async function handleIncomingOffer(fromId, sdp) {
   if (isHost) return;
+  // O servidor já barra isso, mas confere de novo aqui: nunca aceitar uma
+  // oferta de vídeo que não venha do host de fato da sala.
+  if (currentHostId && fromId !== currentHostId) return;
 
   stopStatsWatch();
   if (hostPeerConnection) {
@@ -592,6 +596,7 @@ joinForm.addEventListener('submit', (e) => {
   });
 
   socket.on('room-state', (state) => {
+    currentHostId = state.hostId;
     renderParticipants(state.participants, state.hostId);
 
     // --- Sincronização do modo YouTube ---

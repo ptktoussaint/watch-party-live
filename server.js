@@ -45,7 +45,8 @@ function broadcastRoomState(roomId) {
 io.on('connection', (socket) => {
   socket.on('join-room', ({ roomId, name }) => {
     if (!roomId || !name) return;
-    roomId = String(roomId).trim().toLowerCase();
+    if (socket.data.roomId) return; // essa conexão já entrou numa sala antes
+    roomId = String(roomId).trim().toLowerCase().slice(0, 60);
     name = String(name).trim().slice(0, 40);
     if (!roomId || !name) return;
 
@@ -74,6 +75,7 @@ io.on('connection', (socket) => {
     if (!roomId) return;
     const room = rooms[roomId];
     if (!room || socket.id !== room.hostId) return;
+    if (typeof videoId !== 'string' || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return;
 
     room.videoId = videoId;
     room.isPlaying = true;
@@ -116,19 +118,46 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('time-update', { currentTime });
   });
 
-  // --- Modo Compartilhar tela: sinalização WebRTC (só repassa pro destinatário certo) ---
+  // --- Modo Compartilhar tela: sinalização WebRTC ---
+  // Sem essas checagens, qualquer socket conectado (nem precisa estar na sala)
+  // podia mandar 'webrtc-offer' pra qualquer targetId e o servidor repassava
+  // sem questionar — ou seja, dava pra se passar pelo host e injetar
+  // vídeo/áudio arbitrário na tela de um espectador de outra sala. Agora só
+  // repassa dentro da mesma sala, e só o host de fato pode iniciar uma oferta.
+  function socketInRoom(id, roomId) {
+    const s = io.sockets.sockets.get(id);
+    return !!s && s.data.roomId === roomId;
+  }
+
   socket.on('webrtc-offer', ({ targetId, sdp }) => {
     if (!targetId || !sdp) return;
+    const roomId = socket.data.roomId;
+    const room = rooms[roomId];
+    if (!room || socket.id !== room.hostId) return; // só o host inicia oferta
+    if (!socketInRoom(targetId, roomId)) return;
     io.to(targetId).emit('webrtc-offer', { fromId: socket.id, sdp });
   });
 
   socket.on('webrtc-answer', ({ targetId, sdp }) => {
     if (!targetId || !sdp) return;
+    const roomId = socket.data.roomId;
+    const room = rooms[roomId];
+    if (!room) return;
+    if (targetId !== room.hostId) return; // resposta só pode ir pro host
     io.to(targetId).emit('webrtc-answer', { fromId: socket.id, sdp });
   });
 
   socket.on('webrtc-ice', ({ targetId, candidate }) => {
     if (!targetId || !candidate) return;
+    const roomId = socket.data.roomId;
+    const room = rooms[roomId];
+    if (!room) return;
+
+    if (socket.id === room.hostId) {
+      if (!socketInRoom(targetId, roomId)) return; // host manda pra quem é da sala
+    } else if (targetId !== room.hostId) {
+      return; // espectador só manda candidato de volta pro host
+    }
     io.to(targetId).emit('webrtc-ice', { fromId: socket.id, candidate });
   });
 
