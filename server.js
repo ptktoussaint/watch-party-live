@@ -9,19 +9,64 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Servidor(es) TURN, configurados via variável de ambiente — sem isso, quem
-// está atrás de NAT restritivo/CGNAT (comum em 4G e redes corporativas) não
-// consegue estabelecer a conexão direta de compartilhamento de tela. Defina
-// TURN_URLS (uma ou mais URLs separadas por vírgula, ex:
+// Servidor(es) TURN — sem isso, quem está atrás de NAT restritivo/CGNAT
+// (comum em 4G e redes corporativas) não consegue estabelecer a conexão
+// direta de compartilhamento de tela e a tela fica preta pra sempre.
+//
+// Opção A (recomendada): Cloudflare Realtime TURN. Defina CF_TURN_KEY_ID e
+// CF_TURN_API_TOKEN nas variáveis de ambiente do serviço de hospedagem (ex:
+// Render > Environment). A API da Cloudflare usa credenciais de curta
+// duração — o servidor gera uma nova a cada ~24h (nunca expõe o
+// CF_TURN_API_TOKEN pro navegador, só o resultado já pronto).
+//
+// Opção B: qualquer outro provedor de TURN "tradicional" (usuário/senha
+// fixos) via TURN_URLS (uma ou mais URLs separadas por vírgula, ex:
 // "turn:seu-turn.com:3478,turn:seu-turn.com:443?transport=tcp"),
-// TURN_USERNAME e TURN_CREDENTIAL nas variáveis de ambiente do serviço de
-// hospedagem (ex: Render > Environment) com as credenciais de um provedor
-// de TURN de verdade (Cloudflare Realtime, Twilio, Metered.ca com conta
-// própria, ou um coturn próprio). Sem isso configurado, só STUN é usado, o
-// que funciona pra maioria mas falha pra quem precisa de um retransmissor.
-app.get('/turn-config', (req, res) => {
-  const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+// TURN_USERNAME e TURN_CREDENTIAL.
+//
+// Sem nenhuma das duas configuradas, só STUN é usado — funciona pra maioria,
+// mas falha pra quem precisa de um retransmissor.
+const CF_TURN_KEY_ID = process.env.CF_TURN_KEY_ID;
+const CF_TURN_API_TOKEN = process.env.CF_TURN_API_TOKEN;
+const CF_TURN_TTL_SECONDS = 24 * 60 * 60; // credencial vale por 24h
+let cfIceServersCache = null; // { iceServers, expiresAt }
 
+async function getCloudflareIceServers() {
+  if (cfIceServersCache && cfIceServersCache.expiresAt > Date.now()) {
+    return cfIceServersCache.iceServers;
+  }
+
+  const res = await fetch(
+    `https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate-ice-servers`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${CF_TURN_API_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ ttl: CF_TURN_TTL_SECONDS })
+    }
+  );
+  if (!res.ok) throw new Error(`Cloudflare TURN respondeu ${res.status}`);
+
+  const data = await res.json();
+  if (!Array.isArray(data.iceServers)) throw new Error('Resposta da Cloudflare sem iceServers');
+
+  // Renova um pouco antes de expirar de verdade, pra nunca entregar credencial vencida.
+  cfIceServersCache = { iceServers: data.iceServers, expiresAt: Date.now() + (CF_TURN_TTL_SECONDS - 600) * 1000 };
+  return cfIceServersCache.iceServers;
+}
+
+app.get('/turn-config', async (req, res) => {
+  if (CF_TURN_KEY_ID && CF_TURN_API_TOKEN) {
+    try {
+      return res.json({ iceServers: await getCloudflareIceServers() });
+    } catch (err) {
+      console.error('Falha ao gerar credenciais TURN da Cloudflare, caindo pro fallback:', err.message);
+    }
+  }
+
+  const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
   if (process.env.TURN_URLS) {
     iceServers.push({
       urls: process.env.TURN_URLS.split(',').map((u) => u.trim()).filter(Boolean),
